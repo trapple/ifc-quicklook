@@ -1,0 +1,9 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+FILE_NAME('unsupported_schema.ifc','2026-07-12T00:00:00',(''),(''),'','','');
+FILE_SCHEMA(('IFC2X2'));
+ENDSEC;
+DATA;
+ENDSEC;
+END-ISO-10303-21;

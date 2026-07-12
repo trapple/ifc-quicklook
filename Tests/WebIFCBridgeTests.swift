@@ -33,4 +33,15 @@ final class WebIFCBridgeTests: XCTestCase {
         let bridge = WebIFCBridge()
         XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: "/nonexistent/x.ifc") { _ in })
     }
+
+    /// 非対応スキーマ → unsupportedSchema エラーで、メッセージにスキーマ名が入る
+    func testUnsupportedSchemaThrows() {
+        let bridge = WebIFCBridge()
+        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: fixtureURL("unsupported_schema").path) { _ in }) { error in
+            let ns = error as NSError
+            XCTAssertEqual(ns.domain, IFCBridgeErrorDomain)
+            XCTAssertEqual(ns.code, IFCBridgeError.unsupportedSchema.rawValue)
+            XCTAssertTrue(ns.localizedDescription.contains("IFC2X2"))
+        }
+    }
 }
