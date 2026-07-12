@@ -98,9 +98,17 @@ final class ViewerViewController: NSViewController {
         overlayLabel.stringValue = text
     }
 
+    private var loadTask: Task<Void, Never>?
+
+    /// ビューが外れたらロードをキャンセル（QLのファイル切替で並走・浪費させない）
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        loadTask?.cancel()
+    }
+
     /// ロード開始（プログレッシブ: バッチが届くたびに描画へ追加）
     func start(url: URL) {
-        Task { @MainActor [weak self] in
+        loadTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var framedOnce = false
             do {
@@ -118,6 +126,8 @@ final class ViewerViewController: NSViewController {
                         self.finish(summary: summary)
                     }
                 }
+            } catch is CancellationError {
+                // プレビューが閉じられただけ。エラー表示しない
             } catch {
                 self.show(message: error.localizedDescription)
             }
