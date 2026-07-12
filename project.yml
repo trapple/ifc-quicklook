@@ -39,11 +39,8 @@ targets:
       path: App/App-Info.plist
       properties:
         NSPrincipalClass: NSApplication
-    entitlements:
-      path: App/App.entitlements
-      properties:
-        com.apple.security.app-sandbox: true
-        com.apple.security.files.user-selected.read-only: true
+    # ホストアプリは非サンドボックス（App Store 外配布・開発用ビューアで任意パスを開くため）。
+    # QL 拡張（IFCPreview）側はサンドボックス必須なので維持。
     dependencies:
       - target: IFCPreview
         embed: true
