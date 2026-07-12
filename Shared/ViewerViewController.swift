@@ -77,11 +77,17 @@ final class ViewerViewController: NSViewController {
         arView.isHidden = true
     }
 
-    /// バッチをシーンに追加
-    func append(batches: [MaterialBatch]) {
-        for entity in RKSceneBuilder.makeEntities(batches) {
-            modelRoot.addChild(entity)
-        }
+    /// バッチをシーンに追加。
+    /// 頂点配列の組み立て（重いCPU処理）はバックグラウンド、MeshResource 生成は async 版で
+    /// メインスレッドをブロックしない。追加したエンティティ群を返す（置き換え用）。
+    @discardableResult
+    func append(batches: [MaterialBatch]) async -> [ModelEntity] {
+        let items = await Task.detached(priority: .userInitiated) {
+            RKSceneBuilder.makeDescriptors(batches)
+        }.value
+        let entities = await RKSceneBuilder.makeEntities(items: items)
+        entities.forEach { modelRoot.addChild($0) }
+        return entities
     }
 
     /// 読み込み完了: カメラフレーミングとサマリ表示
@@ -115,7 +121,7 @@ final class ViewerViewController: NSViewController {
                 for try await event in ModelLoader().events(for: url) {
                     switch event {
                     case .batches(let batches):
-                        self.append(batches: batches)
+                        await self.append(batches: batches)
                         // 最初のバッチで即フレーミング（初回描画1秒以内の体感を作る）
                         if !framedOnce, let bounds = Self.bounds(of: batches) {
                             self.cameraController.frame(bounds)
@@ -123,10 +129,17 @@ final class ViewerViewController: NSViewController {
                             framedOnce = true
                         }
                     case .finished(let summary, let consolidated):
-                        // プログレッシブ表示で溜まった細切れエンティティを捨て、
-                        // 色単位（=最小ドローコール）の最終メッシュに置き換える
-                        self.modelRoot.children.removeAll()
-                        self.append(batches: consolidated)
+                        // 細切れエンティティが十分少なければ再統合の価値なし（置き換えの二度手間を回避）
+                        let currentCount = self.modelRoot.children.count
+                        if currentCount > consolidated.count * 2 {
+                            // 新しい統合エンティティを構築してから一括置き換え
+                            // （removeAll を先にすると構築中に画面が空になるため後から）
+                            let old = Array(self.modelRoot.children)
+                            let new = await self.append(batches: consolidated)
+                            if !new.isEmpty {
+                                old.forEach { $0.removeFromParent() }
+                            }
+                        }
                         self.finish(summary: summary)
                     }
                 }
