@@ -5,6 +5,7 @@ options:
 settings:
   base:
     MACOSX_DEPLOYMENT_TARGET: "15.0"
+    ARCHS: arm64                         # libweb-ifc.a が arm64 のみのため（universal 配布時は lib 側も universal 化が必要）
     SWIFT_VERSION: "5.0"                 # 言語モード5（strict concurrency を強制しない）
     CLANG_CXX_LANGUAGE_STANDARD: c++20
     HEADER_SEARCH_PATHS:
