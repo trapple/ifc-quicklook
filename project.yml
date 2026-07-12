@@ -39,6 +39,17 @@ targets:
       path: App/App-Info.plist
       properties:
         NSPrincipalClass: NSApplication
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: IFC Building Model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.buildingsmart.ifc]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.buildingsmart.ifc
+            UTTypeDescription: IFC Building Model
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [ifc]
     # ホストアプリは非サンドボックス（App Store 外配布・開発用ビューアで任意パスを開くため）。
     # QL 拡張（IFCPreview）側はサンドボックス必須なので維持。
     dependencies:
@@ -47,6 +58,9 @@ targets:
   IFCPreview:
     type: app-extension
     platform: macOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: jp.trapple.IFCQuickLook.IFCPreview
     sources:
       - PreviewExtension
       - Shared
@@ -54,7 +68,15 @@ targets:
       - Bridge/WebIFCBridge.mm
     info:
       path: PreviewExtension/PreviewExtension-Info.plist
-      properties: {}   # NSExtension 定義は Task 9 で追記
+      properties:
+        CFBundleDisplayName: IFC Preview
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.quicklook.preview
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PreviewViewController
+          NSExtensionAttributes:
+            QLSupportedContentTypes:
+              - org.buildingsmart.ifc
+            QLSupportsSearchableItems: false
     entitlements:
       path: PreviewExtension/PreviewExtension.entitlements
       properties:
