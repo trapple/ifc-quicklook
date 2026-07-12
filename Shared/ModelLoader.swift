@@ -70,14 +70,16 @@ final class ModelLoader {
                 var lastFlush = started
                 var flushedOnce = false
                 var trisSinceFlush = 0
-                // QL 拡張プロセスはメモリ上限（実測 ~1.2GB）があり、超えると圧縮スワップで
-                // 数倍遅くなる。appex 内では 900MB で打ち切り（省略分は ⚠ 表示される）。
-                // 単体アプリ・CLI は無制限。
+                // QL 拡張プロセスは footprint 約1GB から圧縮スワップで数倍遅くなる。
+                // 速さ優先のため appex 内では 800MB で残りを省略して打ち切り（⚠ 表示される）。
+                // 単体アプリ・CLI は無制限（フル表示はアプリで開く）。
                 let isAppex = Bundle.main.bundleURL.pathExtension == "appex"
-                let memoryCapMB: UInt = isAppex ? 900 : 0
+                let memoryCapMB: UInt = isAppex ? 800 : 0
+                let deadlineSeconds: Double = isAppex ? 3.0 : 0
                 do {
                     let info = try WebIFCBridge().streamMeshes(fromFileAtPath: url.path,
-                                                               memoryCapMB: memoryCapMB) { chunk in
+                                                               memoryCapMB: memoryCapMB,
+                                                               deadlineSeconds: deadlineSeconds) { chunk in
                         // キャンセル後はメッシュ統合・送出をスキップ（パース自体は中断不可のため最速で流し切る）
                         if cancelled.isCancelled { return }
                         // 上限判定は full 側に一元化（false ならスキップ済み要素として計上済み）

@@ -24,7 +24,7 @@ let start = ContinuousClock.now
 let batcher = MeshBatcher()
 let bridge = WebIFCBridge()
 do {
-    let info = try bridge.streamMeshes(fromFileAtPath: path, memoryCapMB: 0) { batcher.add($0) }
+    let info = try bridge.streamMeshes(fromFileAtPath: path, memoryCapMB: 0, deadlineSeconds: 0) { batcher.add($0) }
     let batches = batcher.drain()
     let seconds = Double((ContinuousClock.now - start) / .milliseconds(1)) / 1000
     print("schema=\(info.schemaVersion) elements=\(info.elementCount) " +

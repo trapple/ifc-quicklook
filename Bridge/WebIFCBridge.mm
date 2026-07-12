@@ -85,6 +85,7 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
 
 - (nullable IFCModelInfo *)streamMeshesFromFileAtPath:(NSString *)path
                                           memoryCapMB:(NSUInteger)memoryCapMB
+                                      deadlineSeconds:(double)deadlineSeconds
                                               handler:(void (NS_NOESCAPE ^)(IFCMeshChunk *))handler
                                                 error:(NSError **)error {
     // --- mmap（コピーせず web-ifc に渡す） ---
@@ -149,6 +150,7 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
         // QL は appex プロセスを使い回すため、直前プレビューの残留メモリで
         // 開始時点から数百MB積まれていることがあり、絶対値判定だと即打ち切りになる。
         const double baselineMB = PhysFootprintMB();
+        const NSTimeInterval parseStart = [NSDate timeIntervalSinceReferenceDate];
 
         // 先に対象要素を列挙（メモリ上限打ち切り時に省略数を正確に数えるため）
         std::vector<uint32_t> targetIDs;
@@ -166,10 +168,16 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
                 if (idx != 0 && idx % 32 == 0) {
                     processor.Clear();
                     // メモリ上限チェック: QL 拡張は footprint 約1GB から圧縮スワップで数倍遅くなるため、
-                    // その手前で残りを省略して打ち切る（silent にしない）。
-                    // 残留メモリ（前プレビュー分）が多い場合は baseline+400MB まで許容。
-                    const double hardLimitMB = std::max(baselineMB + 400.0, (double)memoryCapMB);
+                    // 余裕を持って手前で残りを省略して打ち切る（速さ優先・silent にしない）。
+                    // 残留メモリ（前プレビュー分）が多い場合は baseline+250MB まで許容。
+                    const double hardLimitMB = std::max(baselineMB + 250.0, (double)memoryCapMB);
                     if (memoryCapMB > 0 && PhysFootprintMB() > hardLimitMB) {
+                        omittedElements = targetIDs.size() - idx;
+                        break;
+                    }
+                    // 時間デッドライン: ちら見用途では長くても数秒で見せる（速さ優先）
+                    if (deadlineSeconds > 0 &&
+                        [NSDate timeIntervalSinceReferenceDate] - parseStart > deadlineSeconds) {
                         omittedElements = targetIDs.size() - idx;
                         break;
                     }

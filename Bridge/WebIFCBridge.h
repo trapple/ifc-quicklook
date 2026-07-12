@@ -35,13 +35,15 @@ typedef NS_ERROR_ENUM(IFCBridgeErrorDomain, IFCBridgeError) {
 /// ファイルを mmap で読み、要素単位でメッシュを handler にストリームする（呼び出しスレッドで同期実行）。
 /// 成功時は IFCModelInfo、失敗時は nil + error（Fail Fast）。
 /// memoryCapMB > 0 の場合、プロセスの phys_footprint がこの値を超えたら
-/// 残り要素を省略して打ち切る（QL 拡張のメモリ上限での圧縮スワップ激遅化を防ぐ。
-/// 省略数は IFCModelInfo.omittedElements で通知される — silent にしない）。
+/// 残り要素を省略して打ち切る（QL 拡張のメモリ上限での圧縮スワップ激遅化を防ぐ）。
+/// deadlineSeconds > 0 の場合、経過時間がこれを超えても打ち切る（ちら見用途の速さ優先）。
+/// 省略数は IFCModelInfo.omittedElements で通知される — silent にしない。
 - (nullable IFCModelInfo *)streamMeshesFromFileAtPath:(NSString *)path
                                           memoryCapMB:(NSUInteger)memoryCapMB
+                                      deadlineSeconds:(double)deadlineSeconds
                                               handler:(void (NS_NOESCAPE ^)(IFCMeshChunk *chunk))handler
                                                 error:(NSError **)error
-    NS_SWIFT_NAME(streamMeshes(fromFileAtPath:memoryCapMB:handler:));
+    NS_SWIFT_NAME(streamMeshes(fromFileAtPath:memoryCapMB:deadlineSeconds:handler:));
 @end
 
 NS_ASSUME_NONNULL_END
