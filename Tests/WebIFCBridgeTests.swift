@@ -11,7 +11,7 @@ final class WebIFCBridgeTests: XCTestCase {
     func testMinimalWallStreamsTriangles() throws {
         var chunks: [IFCMeshChunk] = []
         let bridge = WebIFCBridge()
-        let info = try bridge.streamMeshes(fromFileAtPath: fixtureURL("minimal_wall").path) { chunks.append($0) }
+        let info = try bridge.streamMeshes(fromFileAtPath: fixtureURL("minimal_wall").path, memoryCapMB: 0) { chunks.append($0) }
         XCTAssertEqual(info.schemaVersion, "IFC4")
         XCTAssertEqual(info.elementCount, 1)
         let triangles = chunks.reduce(0) { $0 + Int($1.indexCount) / 3 }
@@ -23,7 +23,7 @@ final class WebIFCBridgeTests: XCTestCase {
     /// 壊れたファイル → parseFailed で throw（Fail Fast）
     func testBrokenFileThrows() {
         let bridge = WebIFCBridge()
-        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: fixtureURL("broken").path) { _ in }) { error in
+        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: fixtureURL("broken").path, memoryCapMB: 0) { _ in }) { error in
             XCTAssertEqual((error as NSError).domain, IFCBridgeErrorDomain)
         }
     }
@@ -31,13 +31,13 @@ final class WebIFCBridgeTests: XCTestCase {
     /// 存在しないパス → cantOpen
     func testMissingFileThrows() {
         let bridge = WebIFCBridge()
-        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: "/nonexistent/x.ifc") { _ in })
+        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: "/nonexistent/x.ifc", memoryCapMB: 0) { _ in })
     }
 
     /// 非対応スキーマ → unsupportedSchema エラーで、メッセージにスキーマ名が入る
     func testUnsupportedSchemaThrows() {
         let bridge = WebIFCBridge()
-        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: fixtureURL("unsupported_schema").path) { _ in }) { error in
+        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: fixtureURL("unsupported_schema").path, memoryCapMB: 0) { _ in }) { error in
             let ns = error as NSError
             XCTAssertEqual(ns.domain, IFCBridgeErrorDomain)
             XCTAssertEqual(ns.code, IFCBridgeError.unsupportedSchema.rawValue)

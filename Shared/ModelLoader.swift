@@ -48,6 +48,13 @@ final class ModelLoader {
             // GCD ワーカースレッドの既定スタック（512KB）では実ファイルで
             // スタックオーバーフロー（SIGBUS）するため、大スタックの専用スレッドで実行する。
             let thread = Thread {
+                // QL 拡張プロセスはバックグラウンドロール（E-coreクランプ）で起動され
+                // パースが約4倍遅くなる。beginActivity でクランプを解除して P-core で走らせる。
+                let activity = ProcessInfo.processInfo.beginActivity(
+                    options: [.userInitiated, .idleSystemSleepDisabled],
+                    reason: "IFC parsing")
+                defer { ProcessInfo.processInfo.endActivity(activity) }
+
                 Self.gate.wait()
                 defer { Self.gate.signal() }
                 // 待っている間にプレビューが閉じられていたら何もしない
@@ -63,8 +70,14 @@ final class ModelLoader {
                 var lastFlush = started
                 var flushedOnce = false
                 var trisSinceFlush = 0
+                // QL 拡張プロセスはメモリ上限（実測 ~1.2GB）があり、超えると圧縮スワップで
+                // 数倍遅くなる。appex 内では 900MB で打ち切り（省略分は ⚠ 表示される）。
+                // 単体アプリ・CLI は無制限。
+                let isAppex = Bundle.main.bundleURL.pathExtension == "appex"
+                let memoryCapMB: UInt = isAppex ? 900 : 0
                 do {
-                    let info = try WebIFCBridge().streamMeshes(fromFileAtPath: url.path) { chunk in
+                    let info = try WebIFCBridge().streamMeshes(fromFileAtPath: url.path,
+                                                               memoryCapMB: memoryCapMB) { chunk in
                         // キャンセル後はメッシュ統合・送出をスキップ（パース自体は中断不可のため最速で流し切る）
                         if cancelled.isCancelled { return }
                         // 上限判定は full 側に一元化（false ならスキップ済み要素として計上済み）
@@ -95,7 +108,7 @@ final class ModelLoader {
                         schema: info.schemaVersion,
                         elementCount: Int(info.elementCount),
                         triangleCount: fullBatcher.totalTriangles,
-                        skippedElements: fullBatcher.skippedElements,
+                        skippedElements: fullBatcher.skippedElements + Int(info.omittedElements),
                         seconds: seconds,
                         bounds: fullBatcher.bounds)
                     continuation.yield(.finished(summary, consolidated: fullBatcher.drain()))

@@ -117,11 +117,18 @@ final class ViewerViewController: NSViewController {
         loadTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var framedOnce = false
+            var loadedTriangles = 0
+            let started = ContinuousClock.now
             do {
                 for try await event in ModelLoader().events(for: url) {
                     switch event {
                     case .batches(let batches):
                         await self.append(batches: batches)
+                        // 進捗を可視化（大型ファイルで「固まった」と誤解されないように）
+                        loadedTriangles += batches.reduce(0) { $0 + $1.indices.count / 3 }
+                        let elapsed = Double((ContinuousClock.now - started) / .milliseconds(1)) / 1000
+                        self.overlayLabel.stringValue = String(
+                            format: "読み込み中… 三角形 %d  %.0fs", loadedTriangles, elapsed)
                         // 最初のバッチで即フレーミング（初回描画1秒以内の体感を作る）
                         if !framedOnce, let bounds = Self.bounds(of: batches) {
                             self.cameraController.frame(bounds)

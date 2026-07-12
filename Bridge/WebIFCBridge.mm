@@ -3,6 +3,7 @@
 #import <sys/stat.h>
 #import <fcntl.h>
 #import <unistd.h>
+#import <mach/mach.h>
 
 // C++ 世界はこのファイルにのみ存在する
 #include <string>
@@ -32,20 +33,32 @@ NSErrorDomain const IFCBridgeErrorDomain = @"jp.trapple.IFCQuickLook.Bridge";
 @end
 
 @interface IFCModelInfo ()
-- (instancetype)initWithSchema:(NSString *)schema elementCount:(NSUInteger)count;
+- (instancetype)initWithSchema:(NSString *)schema
+                  elementCount:(NSUInteger)count
+               omittedElements:(NSUInteger)omitted;
 @end
 
 @implementation IFCModelInfo {
     NSString *_schema;
     NSUInteger _count;
+    NSUInteger _omitted;
 }
-- (instancetype)initWithSchema:(NSString *)s elementCount:(NSUInteger)c {
-    if ((self = [super init])) { _schema = s; _count = c; }
+- (instancetype)initWithSchema:(NSString *)s elementCount:(NSUInteger)c omittedElements:(NSUInteger)o {
+    if ((self = [super init])) { _schema = s; _count = c; _omitted = o; }
     return self;
 }
 - (NSString *)schemaVersion { return _schema; }
 - (NSUInteger)elementCount { return _count; }
+- (NSUInteger)omittedElements { return _omitted; }
 @end
+
+/// プロセスの現在の物理フットプリント (MB)。取得失敗時は 0。
+static double PhysFootprintMB(void) {
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) return 0;
+    return (double)info.phys_footprint / 1024.0 / 1024.0;
+}
 
 /// ヘッダ部から FILE_SCHEMA を素朴に抽出（web-ifc に依存しない・先頭8KBのみ走査）
 static NSString *SchemaFromHeader(const char *bytes, size_t len) {
@@ -71,6 +84,7 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
 @implementation WebIFCBridge
 
 - (nullable IFCModelInfo *)streamMeshesFromFileAtPath:(NSString *)path
+                                          memoryCapMB:(NSUInteger)memoryCapMB
                                               handler:(void (NS_NOESCAPE ^)(IFCMeshChunk *))handler
                                                 error:(NSError **)error {
     // --- mmap（コピーせず web-ifc に渡す） ---
@@ -112,11 +126,12 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
     }
 
     NSUInteger elementCount = 0;
+    NSUInteger omittedElements = 0;
     size_t totalTriangles = 0;
     try {
         webifc::schema::IfcSchemaManager schemas;
         // 既定値は ModelManager.h の LoaderSettings に準拠（smoke テストで確定済み）
-        webifc::parsing::IfcLoader loader(67108864, 2147483648u, 10000, schemas);
+        webifc::parsing::IfcLoader loader(67108864, 268435456u, 10000, schemas); // memoryLimit=256MB: テープ超過分は再読込でページング（mmap元なので安価）
         loader.LoadFile([&](char *dest, size_t sourceOffset, size_t destSize) -> uint32_t {
             if (sourceOffset >= fileSize) return 0;
             size_t n = std::min(destSize, fileSize - sourceOffset);
@@ -131,8 +146,27 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
 
         std::vector<float> vbuf; // 再利用バッファ
 
+        // 先に対象要素を列挙（メモリ上限打ち切り時に省略数を正確に数えるため）
+        std::vector<uint32_t> targetIDs;
         for (auto type : schemas.GetIfcElementList()) {
-            for (auto eid : loader.GetExpressIDsWithType(type)) {
+            auto &ids = loader.GetExpressIDsWithType(type);
+            targetIDs.insert(targetIDs.end(), ids.begin(), ids.end());
+        }
+
+        for (size_t idx = 0; idx < targetIDs.size(); idx++) {
+                uint32_t eid = targetIDs[idx];
+                // web-ifc は処理済みジオメトリを全てキャッシュし続け、大型モデルでは
+                // ピークメモリがGB級になる（QL 拡張はメモリ上限があり圧縮スワップで激遅化）。
+                // 要素は一巡しか処理しないため、定期的にキャッシュを解放する
+                // （コストは共有ジオメトリの再計算のみ）。
+                if (idx != 0 && idx % 32 == 0) {
+                    processor.Clear();
+                    // メモリ上限チェック: 超えていたら残りを省略して打ち切り（silent にしない）
+                    if (memoryCapMB > 0 && PhysFootprintMB() > (double)memoryCapMB) {
+                        omittedElements = targetIDs.size() - idx;
+                        break;
+                    }
+                }
                 auto flat = processor.GetFlatMesh(eid);
                 bool emitted = false;
                 for (auto &pg : flat.geometries) {
@@ -162,7 +196,6 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
                     emitted = true;
                 }
                 if (emitted) elementCount++;
-            }
         }
     } catch (const std::exception &e) {
         munmap(mapped, fileSize);
@@ -180,7 +213,7 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
         if (error) *error = MakeError(IFCBridgeErrorNoGeometry, @"ジオメトリを持つ要素がありません");
         return nil;
     }
-    return [[IFCModelInfo alloc] initWithSchema:upper elementCount:elementCount];
+    return [[IFCModelInfo alloc] initWithSchema:upper elementCount:elementCount omittedElements:omittedElements];
 }
 
 @end
