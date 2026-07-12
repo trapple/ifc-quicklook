@@ -1,0 +1,83 @@
+name: IFCQuickLook
+options:
+  bundleIdPrefix: jp.trapple
+  createIntermediateGroups: true
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    SWIFT_VERSION: "5.0"                 # 言語モード5（strict concurrency を強制しない）
+    CLANG_CXX_LANGUAGE_STANDARD: c++20
+    HEADER_SEARCH_PATHS:
+      - $(PROJECT_DIR)/.webifc/include
+    LIBRARY_SEARCH_PATHS:
+      - $(PROJECT_DIR)/.webifc/lib
+    OTHER_LDFLAGS: ["-lweb-ifc"]
+    SWIFT_OBJC_BRIDGING_HEADER: Bridge/IFCQuickLook-Bridging-Header.h
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"              # ローカル ad-hoc。配布時に Developer ID へ
+    GENERATE_INFOPLIST_FILE: YES         # Info.plist 未指定ターゲット（tool/test）用
+schemes:
+  IFCQuickLook:
+    build:
+      targets:
+        IFCQuickLook: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [IFCCoreTests]
+targets:
+  IFCQuickLook:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Shared
+      - Bridge/WebIFCBridge.h
+      - Bridge/WebIFCBridge.mm
+    info:
+      path: App/App-Info.plist
+      properties:
+        NSPrincipalClass: NSApplication
+    entitlements:
+      path: App/App.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    dependencies:
+      - target: IFCPreview
+        embed: true
+  IFCPreview:
+    type: app-extension
+    platform: macOS
+    sources:
+      - PreviewExtension
+      - Shared
+      - Bridge/WebIFCBridge.h
+      - Bridge/WebIFCBridge.mm
+    info:
+      path: PreviewExtension/PreviewExtension-Info.plist
+      properties: {}   # NSExtension 定義は Task 9 で追記
+    entitlements:
+      path: PreviewExtension/PreviewExtension.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+  ifcql-bench:
+    type: tool
+    platform: macOS
+    sources:
+      - Bench
+      - Shared
+      - Bridge/WebIFCBridge.h
+      - Bridge/WebIFCBridge.mm
+  IFCCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+        excludes: ["Fixtures/**"]
+      - path: Tests/Fixtures
+        buildPhase: resources
+      - Shared
+      - Bridge/WebIFCBridge.h
+      - Bridge/WebIFCBridge.mm
