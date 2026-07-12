@@ -122,7 +122,11 @@ final class ViewerViewController: NSViewController {
                             self.cameraController.apply(to: self.cameraEntity)
                             framedOnce = true
                         }
-                    case .finished(let summary):
+                    case .finished(let summary, let consolidated):
+                        // プログレッシブ表示で溜まった細切れエンティティを捨て、
+                        // 色単位（=最小ドローコール）の最終メッシュに置き換える
+                        self.modelRoot.children.removeAll()
+                        self.append(batches: consolidated)
                         self.finish(summary: summary)
                     }
                 }
