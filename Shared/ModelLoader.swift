@@ -12,7 +12,10 @@ final class ModelLoader {
                 triangleLimit: Int = 20_000_000,
                 flushInterval: Double = 0.25) -> AsyncThrowingStream<LoadEvent, Error> {
         AsyncThrowingStream { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            // web-ifc の GetMesh() は IfcComposedMesh ツリーを深く再帰する。
+            // GCD ワーカースレッドの既定スタック（512KB）では実ファイルで
+            // スタックオーバーフロー（SIGBUS）するため、大スタックの専用スレッドで実行する。
+            let thread = Thread {
                 let started = ContinuousClock.now
                 let batcher = MeshBatcher(triangleLimit: triangleLimit)
                 var lastFlush = started
@@ -41,6 +44,10 @@ final class ModelLoader {
                     continuation.finish(throwing: error)
                 }
             }
+            thread.stackSize = 32 * 1024 * 1024 // 32MB（仮想確保のみ、実使用ページ分だけ消費）
+            thread.qualityOfService = .userInitiated
+            thread.name = "jp.trapple.IFCQuickLook.ModelLoader"
+            thread.start()
         }
     }
 }
