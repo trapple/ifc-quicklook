@@ -1,0 +1,8 @@
+# ビルド生成物
+build/
+.webifc/
+DerivedData/
+# XcodeGen 生成物（project.yml が正）
+*.xcodeproj
+xcuserdata/
+.DS_Store
