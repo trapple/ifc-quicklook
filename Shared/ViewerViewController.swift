@@ -98,26 +98,43 @@ final class ViewerViewController: NSViewController {
         overlayLabel.stringValue = text
     }
 
-    /// ロード開始（Task 8 で ModelLoader によるプログレッシブ版に差し替える。ここは仮の一括版）
+    /// ロード開始（プログレッシブ: バッチが届くたびに描画へ追加）
     func start(url: URL) {
-        let started = ContinuousClock.now
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let batcher = MeshBatcher()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            var framedOnce = false
             do {
-                let info = try WebIFCBridge().streamMeshes(fromFileAtPath: url.path) { batcher.add($0) }
-                let batches = batcher.drain()
-                let seconds = Double((ContinuousClock.now - started) / .milliseconds(1)) / 1000
-                let summary = LoadSummary(schema: info.schemaVersion, elementCount: Int(info.elementCount),
-                                          triangleCount: batcher.totalTriangles,
-                                          skippedElements: batcher.skippedElements,
-                                          seconds: seconds, bounds: batcher.bounds)
-                DispatchQueue.main.async {
-                    self?.append(batches: batches)
-                    self?.finish(summary: summary)
+                for try await event in ModelLoader().events(for: url) {
+                    switch event {
+                    case .batches(let batches):
+                        self.append(batches: batches)
+                        // 最初のバッチで即フレーミング（初回描画1秒以内の体感を作る）
+                        if !framedOnce, let bounds = Self.bounds(of: batches) {
+                            self.cameraController.frame(bounds)
+                            self.cameraController.apply(to: self.cameraEntity)
+                            framedOnce = true
+                        }
+                    case .finished(let summary):
+                        self.finish(summary: summary)
+                    }
                 }
             } catch {
-                DispatchQueue.main.async { self?.show(message: error.localizedDescription) }
+                self.show(message: error.localizedDescription)
             }
         }
+    }
+
+    /// 初回フレーミング用: 受信済みバッチから暫定 AABB を計算
+    private static func bounds(of batches: [MaterialBatch]) -> AABB? {
+        var bounds: AABB?
+        for batch in batches {
+            var v = 0
+            while v < batch.vertices.count {
+                let p = SIMD3<Float>(batch.vertices[v], batch.vertices[v+1], batch.vertices[v+2])
+                if bounds == nil { bounds = AABB(min: p, max: p) } else { bounds!.union(p) }
+                v += 6
+            }
+        }
+        return bounds
     }
 }
