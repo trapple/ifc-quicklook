@@ -129,16 +129,13 @@ final class ViewerViewController: NSViewController {
                             framedOnce = true
                         }
                     case .finished(let summary, let consolidated):
-                        // 細切れエンティティが十分少なければ再統合の価値なし（置き換えの二度手間を回避）
-                        let currentCount = self.modelRoot.children.count
-                        if currentCount > consolidated.count * 2 {
-                            // 新しい統合エンティティを構築してから一括置き換え
-                            // （removeAll を先にすると構築中に画面が空になるため後から）
-                            let old = Array(self.modelRoot.children)
-                            let new = await self.append(batches: consolidated)
-                            if !new.isEmpty {
-                                old.forEach { $0.removeFromParent() }
-                            }
+                        // consolidated が全メッシュの正（高速ロード時は progressive が一度も
+                        // 走らないため、ここで必ず描画する）。細切れエンティティは
+                        // 新エンティティ構築後に一括置き換え（構築中に画面を空にしない）。
+                        let old = Array(self.modelRoot.children)
+                        let new = await self.append(batches: consolidated)
+                        if !new.isEmpty {
+                            old.forEach { $0.removeFromParent() }
                         }
                         self.finish(summary: summary)
                     }
