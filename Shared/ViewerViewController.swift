@@ -99,7 +99,7 @@ final class ViewerViewController: NSViewController {
         var text = "\(summary.schema)  要素 \(summary.elementCount)  三角形 \(summary.triangleCount)  " +
                    String(format: "%.1fs", summary.seconds)
         if summary.skippedElements > 0 {
-            text = "⚠︎ \(summary.skippedElements)要素を省略（上限超過）  " + text
+            text = "⚠︎ \(summary.skippedElements)要素を省略（上限超過・全体表示は IFCQuickLook.app で開く）  " + text
         }
         overlayLabel.stringValue = text
     }

@@ -165,8 +165,11 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
                 // （コストは共有ジオメトリの再計算のみ）。
                 if (idx != 0 && idx % 32 == 0) {
                     processor.Clear();
-                    // メモリ上限チェック（開始時からの増分）: 超えていたら残りを省略して打ち切り（silent にしない）
-                    if (memoryCapMB > 0 && PhysFootprintMB() - baselineMB > (double)memoryCapMB) {
+                    // メモリ上限チェック: QL 拡張は footprint 約1GB から圧縮スワップで数倍遅くなるため、
+                    // その手前で残りを省略して打ち切る（silent にしない）。
+                    // 残留メモリ（前プレビュー分）が多い場合は baseline+400MB まで許容。
+                    const double hardLimitMB = std::max(baselineMB + 400.0, (double)memoryCapMB);
+                    if (memoryCapMB > 0 && PhysFootprintMB() > hardLimitMB) {
                         omittedElements = targetIDs.size() - idx;
                         break;
                     }
