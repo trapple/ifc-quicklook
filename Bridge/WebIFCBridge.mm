@@ -145,6 +145,10 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
             1.0E-04, 1.0E-04, 1.0E-04, 1.0E-10, 1.0E-04, 1, 150);
 
         std::vector<float> vbuf; // 再利用バッファ
+        // 上限判定は「パース開始時点からの増分」で行う。
+        // QL は appex プロセスを使い回すため、直前プレビューの残留メモリで
+        // 開始時点から数百MB積まれていることがあり、絶対値判定だと即打ち切りになる。
+        const double baselineMB = PhysFootprintMB();
 
         // 先に対象要素を列挙（メモリ上限打ち切り時に省略数を正確に数えるため）
         std::vector<uint32_t> targetIDs;
@@ -161,8 +165,8 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
                 // （コストは共有ジオメトリの再計算のみ）。
                 if (idx != 0 && idx % 32 == 0) {
                     processor.Clear();
-                    // メモリ上限チェック: 超えていたら残りを省略して打ち切り（silent にしない）
-                    if (memoryCapMB > 0 && PhysFootprintMB() > (double)memoryCapMB) {
+                    // メモリ上限チェック（開始時からの増分）: 超えていたら残りを省略して打ち切り（silent にしない）
+                    if (memoryCapMB > 0 && PhysFootprintMB() - baselineMB > (double)memoryCapMB) {
                         omittedElements = targetIDs.size() - idx;
                         break;
                     }

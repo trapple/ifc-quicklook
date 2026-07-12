@@ -106,10 +106,13 @@ final class ViewerViewController: NSViewController {
 
     private var loadTask: Task<Void, Never>?
 
-    /// ビューが外れたらロードをキャンセル（QLのファイル切替で並走・浪費させない）
+    /// ビューが外れたらロードをキャンセルし、シーンのメッシュを即解放する。
+    /// QL は appex プロセスを使い回すため、解放しないと前のプレビューの
+    /// メッシュがメモリに残留し、次のファイルのメモリ上限を圧迫する。
     override func viewDidDisappear() {
         super.viewDidDisappear()
         loadTask?.cancel()
+        modelRoot.children.removeAll()
     }
 
     /// ロード開始（プログレッシブ: バッチが届くたびに描画へ追加）
