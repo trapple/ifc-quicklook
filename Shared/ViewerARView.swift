@@ -14,41 +14,45 @@ final class ViewerARView: ARView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    // QL のリモートビュー転送（ViewBridge）では NSEvent の deltaX/deltaY が常に 0 に
-    // 潰される（locationInWindow は正しい）ため、ドラッグのデルタは位置の差分から
-    // 自前で計算する。deltaX/deltaY 頼みだと QL プレビューで回転・パンが一切効かない。
-    private var lastDragLocation: NSPoint?
+    // ドラッグは NSPanGestureRecognizer で受ける。理由:
+    // - QL のリモートビュー転送（ViewBridge）は生の mouseDown/mouseDragged を
+    //   ホスト側（Finderプレビュー欄のファイルドラッグ判定等）が消費してしまい、
+    //   ビューの override にはほぼ届かない（プロセスまでは届く）。レコグナイザは
+    //   ホストとのイベント調停に乗るため、欄・パネルの両方でドラッグを主張できる
+    //   （Apple 純正 usdz プレビューが欄で回るのも同じ仕組みと推定）。
+    // - さらに ViewBridge は NSEvent の deltaX/deltaY を 0 に潰すため、生イベントでは
+    //   デルタ計算も自前で必要だった。translation(in:) はその問題も回避する。
+    private var gesturesInstalled = false
 
-    private func dragDelta(_ event: NSEvent) -> (Float, Float) {
-        let loc = event.locationInWindow
-        defer { lastDragLocation = loc }
-        guard let last = lastDragLocation else { return (0, 0) }
-        // AppKit 座標は Y 上向き。deltaY は「下に動かすと正」の慣習に合わせて反転
-        return (Float(loc.x - last.x), Float(last.y - loc.y))
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard !gesturesInstalled, window != nil else { return }
+        gesturesInstalled = true
+        let pan = NSPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        addGestureRecognizer(pan)
+        let rightPan = NSPanGestureRecognizer(target: self, action: #selector(handleRightPan(_:)))
+        rightPan.buttonMask = 0x2 // 右ボタン
+        addGestureRecognizer(rightPan)
     }
 
-    override func mouseDown(with event: NSEvent) {
-        lastDragLocation = event.locationInWindow
+    /// 差分を取り出してリセット（AppKit 座標は Y 上向き → 下向き正へ反転）
+    private func consumeTranslation(_ g: NSPanGestureRecognizer) -> (Float, Float) {
+        let t = g.translation(in: self)
+        g.setTranslation(.zero, in: self)
+        return (Float(t.x), Float(-t.y))
     }
-    override func rightMouseDown(with event: NSEvent) {
-        lastDragLocation = event.locationInWindow
-    }
-    override func mouseUp(with event: NSEvent) {
-        lastDragLocation = nil
-    }
-    override func rightMouseUp(with event: NSEvent) {
-        lastDragLocation = nil
-    }
-    override func mouseDragged(with event: NSEvent) {
-        let (dx, dy) = dragDelta(event)
-        if event.modifierFlags.contains(.shift) {
+
+    @objc private func handlePan(_ g: NSPanGestureRecognizer) {
+        let (dx, dy) = consumeTranslation(g)
+        if NSEvent.modifierFlags.contains(.shift) {
             onPan?(dx, dy)
         } else {
             onOrbit?(dx, dy)
         }
     }
-    override func rightMouseDragged(with event: NSEvent) {
-        let (dx, dy) = dragDelta(event)
+
+    @objc private func handleRightPan(_ g: NSPanGestureRecognizer) {
+        let (dx, dy) = consumeTranslation(g)
         onPan?(dx, dy)
     }
     override func scrollWheel(with event: NSEvent) {

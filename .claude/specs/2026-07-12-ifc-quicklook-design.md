@@ -141,17 +141,27 @@ flowchart LR
 
 実地報告「QL プレビューでスクロールズームは効くが、ドラッグ回転が効かない」の調査で確定した事実:
 
-- **QL のリモートビュー転送（ViewBridge）は NSEvent の deltaX/deltaY を 0 に潰す**
-  （locationInWindow は正しく更新される）。mouseDown/mouseDragged 自体は
-  サードパーティ appex にも届く（OS 制約ではない）
-  → ドラッグのデルタは locationInWindow の位置差分から自前計算する。
-  deltaX/deltaY 頼みだと QL 上で回転・パンだけが無反応になる
-- スクロール（scrollingDeltaY）とピンチ（magnification）は潰されず届く
+- **ドラッグは NSPanGestureRecognizer で受けること（最終解）**。生の
+  mouseDown/mouseDragged は QL ホストとの相性が面ごとに異なり信頼できない:
+  - スペースキーパネル: 生イベントはビューに届くが **deltaX/deltaY が 0 に潰される**
+    （locationInWindow は正しい）→ delta 頼みの回転は無反応になる
+  - Finder プレビュー欄: 生イベントは**プロセスには届く**（ローカルモニタで観測可能・
+    hitTest も正しい）のに、ホスト側機構（ファイルドラッグ判定等）に消費されて
+    **ビューの override までほぼ届かない**
+  - レコグナイザはホストとのイベント調停に乗るため両方の面で機能し、
+    translation(in:) はデルタ潰しの影響も受けない。Apple 純正 usdz プレビュー
+    （RAQLPreviewExtension.appex、同じ QL 拡張アーキテクチャ）が欄でも回るのは
+    これと同じ仕組みと推定。SDK ヘッダ QLPreviewingController.h の
+    「大面積のジェスチャレコグナイザはプレビュー標準挙動と衝突するので避けよ」は
+    裏を返せばレコグナイザが機能する証拠
+- スクロール（scrollingDeltaY）とピンチ（magnification）はどの面でも潰されず届く
   （ズームだけ効いていた理由）
 - キーボード（first responder）は QL がブロックする既知挙動。マウスとは別
 - **appex の NSLog / os_log は `log show` で観測できない**。appex 内のデバッグは
   コンテナ tmp（NSTemporaryDirectory）へのファイル書き込みで行うこと。
   「ログが出ない＝イベントが来ていない」と誤診しやすい（一度誤診した）
+- 合成 CGEvent（自動テスト）はスペースキーパネルには通用するが、Finder の
+  プレビュー欄では実マウスと挙動が異なり**偽陰性を出す**。欄の検証は実マウスで行う
 
 ## スコープ外（YAGNI）
 
