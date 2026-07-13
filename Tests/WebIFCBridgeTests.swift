@@ -34,6 +34,18 @@ final class WebIFCBridgeTests: XCTestCase {
         XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: "/nonexistent/x.ifc", memoryCapMB: 0, deadlineSeconds: 0) { _ in })
     }
 
+    /// デッドラインはトークナイズ段階でも効く: 事実上ゼロのデッドラインなら
+    /// LoadFile 中に打ち切られてエラーになる（ハングして返らない、が最悪ケース）
+    func testDeadlineCutsOffTokenize() {
+        let bridge = WebIFCBridge()
+        XCTAssertThrowsError(try bridge.streamMeshes(fromFileAtPath: fixtureURL("minimal_wall").path, memoryCapMB: 0, deadlineSeconds: 1e-9) { _ in }) { error in
+            let ns = error as NSError
+            XCTAssertEqual(ns.domain, IFCBridgeErrorDomain)
+            XCTAssertEqual(ns.code, IFCBridgeError.deadlineExceeded.rawValue)
+            XCTAssertTrue(ns.localizedDescription.contains("時間内に読み込めませんでした"))
+        }
+    }
+
     /// 非対応スキーマ → unsupportedSchema エラーで、メッセージにスキーマ名が入る
     func testUnsupportedSchemaThrows() {
         let bridge = WebIFCBridge()

@@ -105,6 +105,13 @@ final class ViewerViewController: NSViewController {
     }
 
     private var loadTask: Task<Void, Never>?
+    private var watchdogTask: Task<Void, Never>?
+    private var lastEventAt = ContinuousClock.now
+
+    /// appex でハングとみなすイベント無音時間。
+    /// 正常時はデッドライン3秒＋flush間隔で必ず数秒おきにイベントが届くため、
+    /// これを大きく超えたらパースがハングしている（web-ifc は中断不可）。
+    private static let watchdogSilence: Duration = .seconds(15)
 
     /// ビューが外れたらロードをキャンセルし、シーンのメッシュを即解放する。
     /// QL は appex プロセスを使い回すため、解放しないと前のプレビューの
@@ -112,11 +119,19 @@ final class ViewerViewController: NSViewController {
     override func viewDidDisappear() {
         super.viewDidDisappear()
         loadTask?.cancel()
+        watchdogTask?.cancel()
         modelRoot.children.removeAll()
+        // パースがハングしたプロセスは使い回さず破棄する（QL が次回新プロセスを
+        // 起動して復旧）。ハング中のスレッドは終了させられないため、これが唯一の
+        // 回復手段。破棄しないと以後の全プレビューがゲート待ちで固まり続ける。
+        if ModelLoader.isAppex && ModelLoader.isPoisoned {
+            _exit(0)
+        }
     }
 
     /// ロード開始（プログレッシブ: バッチが届くたびに描画へ追加）
     func start(url: URL) {
+        startWatchdog()
         loadTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var framedOnce = false
@@ -124,6 +139,7 @@ final class ViewerViewController: NSViewController {
             let started = ContinuousClock.now
             do {
                 for try await event in ModelLoader().events(for: url) {
+                    self.lastEventAt = .now
                     switch event {
                     case .batches(let batches):
                         await self.append(batches: batches)
@@ -139,6 +155,9 @@ final class ViewerViewController: NSViewController {
                             framedOnce = true
                         }
                     case .finished(let summary, let consolidated):
+                        // パースは完了。以降の統合メッシュ構築は巨大モデルだと15秒を
+                        // 超えうるので、ここでウォッチドッグを止める。
+                        self.watchdogTask?.cancel()
                         // consolidated が全メッシュの正（高速ロード時は progressive が一度も
                         // 走らないため、ここで必ず描画する）。細切れエンティティは
                         // 新エンティティ構築後に一括置き換え（構築中に画面を空にしない）。
@@ -154,6 +173,27 @@ final class ViewerViewController: NSViewController {
                 // プレビューが閉じられただけ。エラー表示しない
             } catch {
                 self.show(message: error.localizedDescription)
+            }
+            self.watchdogTask?.cancel()
+        }
+    }
+
+    /// ハング検知（appex のみ）。web-ifc のパースは中断不可のため、単一要素内で
+    /// ハングするとデッドラインでは打ち切れない。イベント無音が続いたらハングと
+    /// みなしてエラー表示し、プロセスを汚染済みにする（閉じられた時点で破棄）。
+    private func startWatchdog() {
+        guard ModelLoader.isAppex else { return }
+        lastEventAt = .now
+        watchdogTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled else { return }
+                if ContinuousClock.now - self.lastEventAt > Self.watchdogSilence {
+                    ModelLoader.markPoisoned()
+                    self.loadTask?.cancel()
+                    self.show(message: "読み込みが応答しなくなりました。プレビューを一度閉じて開き直すと復旧します")
+                    return
+                }
             }
         }
     }

@@ -81,6 +81,11 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
                            userInfo:@{NSLocalizedDescriptionKey : msg}];
 }
 
+/// トークナイズ中のデッドライン超過を示す専用例外。
+/// 日本語メッセージは Objective-C 側で NSError に載せる（C++ 例外の what() を
+/// NSString の %s に通すと非ASCIIが失われるため、例外にはメッセージを持たせない）。
+struct DeadlineExceeded {};
+
 @implementation WebIFCBridge
 
 - (nullable IFCModelInfo *)streamMeshesFromFileAtPath:(NSString *)path
@@ -131,14 +136,29 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
     size_t totalTriangles = 0;
     try {
         webifc::schema::IfcSchemaManager schemas;
+        const NSTimeInterval parseStart = [NSDate timeIntervalSinceReferenceDate];
         // 既定値は ModelManager.h の LoaderSettings に準拠（smoke テストで確定済み）
         webifc::parsing::IfcLoader loader(67108864, 268435456u, 10000, schemas); // memoryLimit=256MB: テープ超過分は再読込でページング（mmap元なので安価）
+        // デッドラインはトークナイズにも適用する。ここが対象外だと巨大ファイルで
+        // 数十秒無応答になり、直列化ゲートを握ったまま後続プレビューを道連れにする
+        // （実地でハング報告あり）。ただしここはハング防止のバックストップなので
+        // 2倍の猶予を取り、中型ファイルの「3秒で打ち切って部分表示」の道を潰さない。
+        // ページング再読込（要素ループ中の再呼び出し）では投げない: そこは
+        // 要素ループ側の毎要素判定で穏当に打ち切る。
+        // 注: 例外時に web-ifc 内部の行カウント用バッファ（chunkSize分）が leak するが、
+        // GB級ファイルを開いたときだけの稀な事象で有界なので許容する（vendor 側の実装都合）。
+        bool tokenizing = true;
         loader.LoadFile([&](char *dest, size_t sourceOffset, size_t destSize) -> uint32_t {
+            if (tokenizing && deadlineSeconds > 0 &&
+                [NSDate timeIntervalSinceReferenceDate] - parseStart > deadlineSeconds * 2) {
+                throw DeadlineExceeded{};
+            }
             if (sourceOffset >= fileSize) return 0;
             size_t n = std::min(destSize, fileSize - sourceOffset);
             memcpy(dest, bytes + sourceOffset, n);
             return (uint32_t)n;
         });
+        tokenizing = false;
 
         // circleSegments=12, coordinateToOrigin=true（巨大座標を原点に寄せ float 精度を守る）
         webifc::geometry::IfcGeometryProcessor processor(
@@ -150,7 +170,6 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
         // QL は appex プロセスを使い回すため、直前プレビューの残留メモリで
         // 開始時点から数百MB積まれていることがあり、絶対値判定だと即打ち切りになる。
         const double baselineMB = PhysFootprintMB();
-        const NSTimeInterval parseStart = [NSDate timeIntervalSinceReferenceDate];
 
         // 先に対象要素を列挙（メモリ上限打ち切り時に省略数を正確に数えるため）
         std::vector<uint32_t> targetIDs;
@@ -161,6 +180,15 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
 
         for (size_t idx = 0; idx < targetIDs.size(); idx++) {
                 uint32_t eid = targetIDs[idx];
+                // 時間デッドライン: ちら見用途では長くても数秒で見せる（速さ優先）。
+                // 32要素ごとだと重い要素の連なりで大きく超過するため毎要素で判定する
+                // （時刻取得のコストはジオメトリ処理に比べ無視できる）。
+                // idx==0 は除外: 最低1要素は出して「ジオメトリなし」誤判定を防ぐ。
+                if (idx != 0 && deadlineSeconds > 0 &&
+                    [NSDate timeIntervalSinceReferenceDate] - parseStart > deadlineSeconds) {
+                    omittedElements = targetIDs.size() - idx;
+                    break;
+                }
                 // web-ifc は処理済みジオメトリを全てキャッシュし続け、大型モデルでは
                 // ピークメモリがGB級になる（QL 拡張はメモリ上限があり圧縮スワップで激遅化）。
                 // 要素は一巡しか処理しないため、定期的にキャッシュを解放する
@@ -172,12 +200,6 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
                     // 残留メモリ（前プレビュー分）が多い場合は baseline+250MB まで許容。
                     const double hardLimitMB = std::max(baselineMB + 250.0, (double)memoryCapMB);
                     if (memoryCapMB > 0 && PhysFootprintMB() > hardLimitMB) {
-                        omittedElements = targetIDs.size() - idx;
-                        break;
-                    }
-                    // 時間デッドライン: ちら見用途では長くても数秒で見せる（速さ優先）
-                    if (deadlineSeconds > 0 &&
-                        [NSDate timeIntervalSinceReferenceDate] - parseStart > deadlineSeconds) {
                         omittedElements = targetIDs.size() - idx;
                         break;
                     }
@@ -212,10 +234,17 @@ static NSError *MakeError(IFCBridgeError code, NSString *msg) {
                 }
                 if (emitted) elementCount++;
         }
+    } catch (const DeadlineExceeded &) {
+        munmap(mapped, fileSize);
+        if (error) *error = MakeError(IFCBridgeErrorDeadlineExceeded,
+            @"時間内に読み込めませんでした（ファイルが大きすぎます）。IFCQuickLook.app で開いてください");
+        return nil;
     } catch (const std::exception &e) {
         munmap(mapped, fileSize);
+        // what() は UTF-8 として解釈する（stringWithFormat の %s は非ASCIIを落とす）
+        NSString *what = [NSString stringWithUTF8String:e.what()] ?: @"";
         if (error) *error = MakeError(IFCBridgeErrorParseFailed,
-            [NSString stringWithFormat:@"パースに失敗しました: %s", e.what()]);
+            [NSString stringWithFormat:@"パースに失敗しました: %@", what]);
         return nil;
     } catch (...) {
         munmap(mapped, fileSize);

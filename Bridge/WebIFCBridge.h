@@ -10,6 +10,7 @@ typedef NS_ERROR_ENUM(IFCBridgeErrorDomain, IFCBridgeError) {
     IFCBridgeErrorUnsupportedSchema = 2, // IFC2x3/IFC4/IFC4x3 以外
     IFCBridgeErrorParseFailed = 3,       // web-ifc がパースに失敗（C++例外含む）
     IFCBridgeErrorNoGeometry = 4,        // パースは通ったがジオメトリゼロ
+    IFCBridgeErrorDeadlineExceeded = 5,  // トークナイズがデッドラインを超過（巨大ファイル）
 };
 
 /// 1要素・1配置分のメッシュ。頂点は position(xyz)+normal(xyz) の float32 6要素インターリーブ。

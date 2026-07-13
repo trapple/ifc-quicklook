@@ -5,17 +5,29 @@ enum LoadEvent {
     case finished(LoadSummary, consolidated: [MaterialBatch]) // 完了サマリ + 色単位に再統合した最終メッシュ
 }
 
-/// スレッド安全なキャンセルフラグ
-private final class CancelFlag: @unchecked Sendable {
+/// スレッド安全な一方向フラグ（キャンセル・汚染マーク用）
+final class AtomicFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var value = false
-    var isCancelled: Bool {
+    var isSet: Bool {
         lock.lock(); defer { lock.unlock() }
         return value
     }
-    func cancel() {
+    func set() {
         lock.lock(); defer { lock.unlock() }
         value = true
+    }
+}
+
+/// ロード固有のエラー（web-ifc 由来ではなくプロセス状態に起因するもの）
+enum LoadError: LocalizedError {
+    /// 前のパースがハングしてゲートを解放しない（web-ifc は中断不可）
+    case previousParseStuck
+    var errorDescription: String? {
+        switch self {
+        case .previousParseStuck:
+            return "前のファイルの処理が固まっているため表示できません。プレビューを一度閉じて開き直すと復旧します"
+        }
     }
 }
 
@@ -32,6 +44,21 @@ final class ModelLoader {
     /// ないため、プロセス内で同時に 1 パースに直列化する（データレースで SIGBUS した実績あり）。
     private static let gate = DispatchSemaphore(value: 1)
 
+    /// QL 拡張（appex）内で動いているか。メモリ上限・デッドライン・ハング対策は appex のみ。
+    static let isAppex = Bundle.main.bundleURL.pathExtension == "appex"
+
+    /// このプロセスでパースがハングしたか（ゲートのタイムアウト or UI ウォッチドッグが設定）。
+    /// ハング中のスレッドは終了させられないため、汚染されたプロセスはプレビューが
+    /// 閉じられた時点で破棄して QL に作り直させる（ViewerViewController が参照）。
+    private static let poisonedFlag = AtomicFlag()
+    static var isPoisoned: Bool { poisonedFlag.isSet }
+    static func markPoisoned() { poisonedFlag.set() }
+
+    /// appex でゲート取得を諦めるまでの秒数。
+    /// 正常時のゲート保持はデッドライン3秒＋後処理で高々数秒なので、10秒待って
+    /// 取れなければ前のパースがハングしていると判断する。
+    private static let gateTimeout: DispatchTimeInterval = .seconds(10)
+
     /// 2回目以降の flush 閾値
     private static let flushTriangles = 500_000
     private static let flushSeconds: Duration = .seconds(1)
@@ -40,9 +67,9 @@ final class ModelLoader {
                 triangleLimit: Int = 20_000_000,
                 flushInterval: Double = 0.25) -> AsyncThrowingStream<LoadEvent, Error> {
         AsyncThrowingStream { continuation in
-            let cancelled = CancelFlag()
+            let cancelled = AtomicFlag()
             // 消費側の Task がキャンセルされたら（= プレビューが閉じられたら）フラグを立てる
-            continuation.onTermination = { _ in cancelled.cancel() }
+            continuation.onTermination = { _ in cancelled.set() }
 
             // web-ifc の GetMesh() は IfcComposedMesh ツリーを深く再帰する。
             // GCD ワーカースレッドの既定スタック（512KB）では実ファイルで
@@ -55,10 +82,21 @@ final class ModelLoader {
                     reason: "IFC parsing")
                 defer { ProcessInfo.processInfo.endActivity(activity) }
 
-                Self.gate.wait()
+                // appex ではタイムアウト付きでゲートを取る。前のパースがハングしていると
+                // ここで永久に待ち、以後の全プレビューが道連れになるため（実地で報告あり）、
+                // 諦めてエラー表示し、プロセスを汚染済みにする（閉じられた時点で破棄→自己回復）。
+                if Self.isAppex {
+                    if Self.gate.wait(timeout: .now() + Self.gateTimeout) == .timedOut {
+                        Self.markPoisoned()
+                        continuation.finish(throwing: LoadError.previousParseStuck)
+                        return
+                    }
+                } else {
+                    Self.gate.wait()
+                }
                 defer { Self.gate.signal() }
                 // 待っている間にプレビューが閉じられていたら何もしない
-                if cancelled.isCancelled {
+                if cancelled.isSet {
                     continuation.finish()
                     return
                 }
@@ -73,15 +111,14 @@ final class ModelLoader {
                 // QL 拡張プロセスは footprint 約1GB から圧縮スワップで数倍遅くなる。
                 // 速さ優先のため appex 内では 800MB で残りを省略して打ち切り（⚠ 表示される）。
                 // 単体アプリ・CLI は無制限（フル表示はアプリで開く）。
-                let isAppex = Bundle.main.bundleURL.pathExtension == "appex"
-                let memoryCapMB: UInt = isAppex ? 800 : 0
-                let deadlineSeconds: Double = isAppex ? 3.0 : 0
+                let memoryCapMB: UInt = Self.isAppex ? 800 : 0
+                let deadlineSeconds: Double = Self.isAppex ? 3.0 : 0
                 do {
                     let info = try WebIFCBridge().streamMeshes(fromFileAtPath: url.path,
                                                                memoryCapMB: memoryCapMB,
                                                                deadlineSeconds: deadlineSeconds) { chunk in
                         // キャンセル後はメッシュ統合・送出をスキップ（パース自体は中断不可のため最速で流し切る）
-                        if cancelled.isCancelled { return }
+                        if cancelled.isSet { return }
                         // 上限判定は full 側に一元化（false ならスキップ済み要素として計上済み）
                         guard fullBatcher.add(chunk) else { return }
                         progressBatcher.add(chunk)
@@ -100,7 +137,7 @@ final class ModelLoader {
                             lastFlush = now
                         }
                     }
-                    if cancelled.isCancelled {
+                    if cancelled.isSet {
                         continuation.finish()
                         return
                     }
