@@ -30,9 +30,8 @@ final class ViewerARView: ARView {
         gesturesInstalled = true
         let pan = NSPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         addGestureRecognizer(pan)
-        let rightPan = NSPanGestureRecognizer(target: self, action: #selector(handleRightPan(_:)))
-        rightPan.buttonMask = 0x2 // 右ボタン
-        addGestureRecognizer(rightPan)
+        // 注意: 右ボタンを buttonMask=0x2 のレコグナイザで受ける構成は QL パネルでは
+        // 一切発火しない（実測）。右ドラッグは生イベント＋位置差分で処理する（下記）。
     }
 
     /// 差分を取り出してリセット（AppKit 座標は Y 上向き → 下向き正へ反転）
@@ -51,9 +50,25 @@ final class ViewerARView: ARView {
         }
     }
 
-    @objc private func handleRightPan(_ g: NSPanGestureRecognizer) {
-        let (dx, dy) = consumeTranslation(g)
-        onPan?(dx, dy)
+    // 右（2本指クリック）ドラッグのパン。
+    // レコグナイザ（buttonMask=0x2）は QL パネルで発火しないため生イベントで受ける。
+    // 生イベントの右ボタン系はパネルでもビューまで届く（左と違いホストに食われない）が、
+    // deltaX/deltaY は例によって 0 に潰されるため位置差分で計算する。
+    // Finder プレビュー欄では右イベント自体が届かないため、欄でのパンは Shift+ドラッグを使う。
+    private var lastRightDragLocation: NSPoint?
+
+    override func rightMouseDown(with event: NSEvent) {
+        lastRightDragLocation = event.locationInWindow
+    }
+    override func rightMouseDragged(with event: NSEvent) {
+        let loc = event.locationInWindow
+        if let last = lastRightDragLocation {
+            onPan?(Float(loc.x - last.x), Float(last.y - loc.y))
+        }
+        lastRightDragLocation = loc
+    }
+    override func rightMouseUp(with event: NSEvent) {
+        lastRightDragLocation = nil
     }
     override func scrollWheel(with event: NSEvent) {
         onZoom?(Float(event.scrollingDeltaY) * 0.1)
