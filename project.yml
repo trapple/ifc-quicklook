@@ -4,7 +4,7 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "1.0.2"
+    MARKETING_VERSION: "1.0.3"
     CURRENT_PROJECT_VERSION: "1"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     ARCHS: arm64                         # libweb-ifc.a が arm64 のみのため（universal 配布時は lib 側も universal 化が必要）
