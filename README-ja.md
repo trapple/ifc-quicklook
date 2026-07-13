@@ -46,19 +46,21 @@ Finder → 右クリック → このアプリケーションで開く → IFCQu
 v1.0.1 でハング対策を入れた（読み込みの各段階にデッドライン、ハング検知時はエラー表示してプレビューを閉じた時点でプロセスを自動再作成）。それでも固まる場合は、固まった状態のままターミナルで以下を実行して、出力を添えて [Issue](https://github.com/trapple/ifc-quicklook/issues) で報告してほしい:
 
 ```bash
+IFC="ここに固まった.ifcファイルのパスを入れる"
 {
   sw_vers
   sysctl -n machdep.cpu.brand_string
   echo "RAM: $(($(sysctl -n hw.memsize)/1073741824)) GB"
-  mdls -name kMDItemFSSize "<固まった.ifcファイルのパス>"
+  mdls -name kMDItemFSSize "$IFC"
   PID=$(pgrep -x IFCPreview | tail -1)
   echo "IFCPreview PID: ${PID:-見つからない}"
   [ -n "$PID" ] && sample "$PID" 5 -file /tmp/ifcql_sample.txt >/dev/null 2>&1 \
-    && grep -m1 -A 40 "Call graph" /tmp/ifcql_sample.txt
+    && { grep -A 35 "ModelLoader" /tmp/ifcql_sample.txt \
+         || grep -m1 -A 40 "Call graph" /tmp/ifcql_sample.txt; }
 } 2>&1
 ```
 
-どこで止まっているか（パース内部か、前のプレビューの待ちか）がスタックから特定できる。
+パースは `jp.trapple.IFCQuickLook.ModelLoader` という名前の専用スレッドで動いているので、そのスタックからどこで止まっているか（パース内部か、前のプレビューの待ち＝`semaphore_wait` か）を特定できる。
 
 ## ソースからビルド
 
