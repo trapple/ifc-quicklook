@@ -137,6 +137,22 @@ flowchart LR
    `_exit(0)` して QL に新プロセスを作らせる（＝次のプレビューから正常に戻る）。
    ハング中スレッドは kill できないため、プロセス破棄が唯一の回復手段
 
+## QL プレビューの入力制約（2026-07-13 追記: 「回転が効かない」障害の対策）
+
+実地報告「QL プレビューでスクロールズームは効くが、ドラッグ回転が効かない」の調査で確定した事実:
+
+- **QL のリモートビュー転送（ViewBridge）は NSEvent の deltaX/deltaY を 0 に潰す**
+  （locationInWindow は正しく更新される）。mouseDown/mouseDragged 自体は
+  サードパーティ appex にも届く（OS 制約ではない）
+  → ドラッグのデルタは locationInWindow の位置差分から自前計算する。
+  deltaX/deltaY 頼みだと QL 上で回転・パンだけが無反応になる
+- スクロール（scrollingDeltaY）とピンチ（magnification）は潰されず届く
+  （ズームだけ効いていた理由）
+- キーボード（first responder）は QL がブロックする既知挙動。マウスとは別
+- **appex の NSLog / os_log は `log show` で観測できない**。appex 内のデバッグは
+  コンテナ tmp（NSTemporaryDirectory）へのファイル書き込みで行うこと。
+  「ログが出ない＝イベントが来ていない」と誤診しやすい（一度誤診した）
+
 ## スコープ外（YAGNI）
 
 - サムネイル拡張（Finder アイコン）
